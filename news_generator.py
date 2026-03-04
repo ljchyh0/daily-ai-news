@@ -92,41 +92,52 @@ def generate_ai_news(blacklist):
         print("❌ 资讯生成失败：", str(e))
         return None, []
 
+
 def send_email(news_content):
-    email_html = """
+    """将生成的资讯发送到指定邮箱，完全兼容QQ邮箱格式"""
+    # 构建适配邮箱的HTML内容
+    email_html = f"""
     <html>
     <head>
         <meta charset="UTF-8">
-        <title>""" + today.strftime('%Y-%m-%d') + """ 每日AI专属资讯</title>
+        <title>{today.strftime('%Y-%m-%d')} 每日AI专属资讯</title>
         <style>
-            body { font-family: "微软雅黑", Arial; line-height: 1.8; color: #333; max-width: 900px; margin: 0 auto; padding: 20px; }
-            h2 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; margin-top: 30px; }
-            strong { color: #e74c3c; }
+            body {{ font-family: "微软雅黑", "PingFang SC", Arial; line-height: 1.8; color: #333; max-width: 900px; margin: 0 auto; padding: 20px; }}
+            h2 {{ color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; margin-top: 30px; }}
+            h3 {{ color: #34495e; margin-top: 25px; }}
+            p {{ margin: 10px 0; }}
+            a {{ color: #3498db; text-decoration: none; }}
+            strong {{ color: #e74c3c; }}
         </style>
     </head>
     <body>
-        <h1 style="text-align: center; color: #2c3e50;">""" + today.strftime('%Y-%m-%d') + """ 每日AI专属资讯</h1>
+        <h1 style="text-align: center; color: #2c3e50;">{today.strftime('%Y-%m-%d')} 每日AI专属资讯</h1>
         <div style="margin-top: 20px;">
-            """ + news_content.replace('\n', '<br>').replace('---', '<hr>') + """
+            {news_content.replace('\n', '<br>').replace('---', '<hr>')}
+        </div>
+        <div style="margin-top: 50px; padding-top: 20px; border-top: 1px solid #eee; color: #999; font-size: 12px; text-align: center;">
+            本资讯由豆包大模型自动生成，严格遵循终身去重规则，每日定时推送
         </div>
     </body>
     </html>
     """
+    
+    # 配置邮件（核心修改：From只用纯邮箱地址，不加昵称，完全符合QQ邮箱要求）
     message = MIMEText(email_html, 'html', 'utf-8')
-    message['From'] = Header("每日AI资讯推送 <" + SENDER_EMAIL + ">", 'utf-8')
-    message['To'] = Header(RECEIVER_EMAIL, 'utf-8')
-    message['Subject'] = Header(today.strftime('%Y-%m-%d') + " 每日AI专属资讯", 'utf-8')
+    message['From'] = SENDER_EMAIL  # 核心修改：直接用纯邮箱地址
+    message['To'] = RECEIVER_EMAIL
+    message['Subject'] = Header(f"{today.strftime('%Y-%m-%d')} 每日AI专属资讯", 'utf-8')
 
     try:
         print("✅ 开始发送邮件...")
         smtp_obj = smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT, timeout=30)
         smtp_obj.login(SENDER_EMAIL, EMAIL_AUTH_CODE)
-        smtp_obj.sendmail(SENDER_EMAIL, RECEIVER_EMAIL, message.as_string())
+        smtp_obj.sendmail(SENDER_EMAIL, [RECEIVER_EMAIL], message.as_string())
         smtp_obj.quit()
         print("✅ 邮件发送成功，已推送至：", RECEIVER_EMAIL)
         return True
     except Exception as e:
-        print("❌ 邮件发送失败：", str(e))
+        print(f"❌ 邮件发送失败：{e}")
         return False
 
 if __name__ == "__main__":
