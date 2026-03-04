@@ -69,7 +69,7 @@ def generate_ai_news(blacklist):
     }
     try:
         print("✅ 开始生成", date_range_str, " AI资讯，已加载", len(blacklist), "条历史去重指纹...")
-        response = requests.post(API_URL, headers=headers, json=data, timeout=180)
+        response = requests.post(API_URL, headers=headers, json=data, timeout=300)
         response.raise_for_status()
         full_content = response.json()["choices"][0]["message"]["content"]
         
