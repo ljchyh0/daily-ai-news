@@ -2,6 +2,7 @@ import requests
 import smtplib
 import os
 import json
+import markdown2
 from datetime import datetime, timedelta
 from email.mime.text import MIMEText
 from email.header import Header
@@ -25,8 +26,135 @@ today_str = today.strftime('%Y-%m-%d')
 BLACKLIST_FILE = "news_blacklist.json"
 API_URL = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
 
-# ================= 核心功能函数 =================
+# ================= 核心Markdown转HTML函数（复用你提供的专业方案） =================
+def markdown_to_html_document(markdown_text: str) -> str:
+    """
+    Convert Markdown to a complete HTML document for email rendering.
+    Supports tables, code blocks, bold, titles, line breaks and all standard markdown syntax.
+    """
+    html_content = markdown2.markdown(
+        markdown_text,
+        extras=["tables", "fenced-code-blocks", "break-on-newline", "cuddled-lists"],
+    )
 
+    css_style = """
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, "微软雅黑", "PingFang SC", sans-serif;
+                line-height: 1.6;
+                color: #24292e;
+                font-size: 15px;
+                padding: 20px;
+                max-width: 900px;
+                margin: 0 auto;
+            }
+            h1 {
+                font-size: 24px;
+                border-bottom: 1px solid #eaecef;
+                padding-bottom: 0.5em;
+                margin-top: 1.5em;
+                margin-bottom: 1em;
+                color: #0366d6;
+                text-align: center;
+            }
+            h2 {
+                font-size: 20px;
+                border-bottom: 1px solid #eaecef;
+                padding-bottom: 0.3em;
+                margin-top: 1.2em;
+                margin-bottom: 0.8em;
+                color: #24292e;
+            }
+            h3 {
+                font-size: 17px;
+                margin-top: 1em;
+                margin-bottom: 0.5em;
+            }
+            p {
+                margin-top: 0;
+                margin-bottom: 10px;
+            }
+            strong {
+                color: #d73a49;
+                font-weight: 600;
+            }
+            table {
+                border-collapse: collapse;
+                width: 100%;
+                margin: 12px 0;
+                display: block;
+                overflow-x: auto;
+                font-size: 13px;
+            }
+            th, td {
+                border: 1px solid #dfe2e5;
+                padding: 6px 10px;
+                text-align: left;
+            }
+            th {
+                background-color: #f6f8fa;
+                font-weight: 600;
+            }
+            tr:nth-child(2n) {
+                background-color: #f8f8f8;
+            }
+            tr:hover {
+                background-color: #f1f8ff;
+            }
+            blockquote {
+                color: #6a737d;
+                border-left: 0.25em solid #dfe2e5;
+                padding: 0 1em;
+                margin: 0 0 10px 0;
+            }
+            code {
+                padding: 0.2em 0.4em;
+                margin: 0;
+                font-size: 85%;
+                background-color: rgba(27,31,35,0.05);
+                border-radius: 3px;
+                font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+            }
+            pre {
+                padding: 12px;
+                overflow: auto;
+                line-height: 1.45;
+                background-color: #f6f8fa;
+                border-radius: 3px;
+                margin-bottom: 10px;
+            }
+            hr {
+                height: 0.25em;
+                padding: 0;
+                margin: 16px 0;
+                background-color: #e1e4e8;
+                border: 0;
+            }
+            ul, ol {
+                padding-left: 20px;
+                margin-bottom: 10px;
+            }
+            li {
+                margin: 2px 0;
+            }
+        """
+
+    return f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+                {css_style}
+            </style>
+        </head>
+        <body>
+            {html_content}
+        </body>
+        </html>
+        """
+
+# ================= 核心功能函数 =================
 def load_blacklist():
     """加载历史去重库"""
     if os.path.exists(BLACKLIST_FILE):
@@ -43,40 +171,45 @@ def save_blacklist(blacklist):
         json.dump(blacklist, f, ensure_ascii=False, indent=2)
 
 def build_prompt(date_range, blacklist):
-    """【核心优化·满足新需求】构建强制格式Prompt，新增目录+标题，彻底去掉时间字段"""
+    """【优化】输出标准Markdown格式，确保渲染正确，保留所有需求规则"""
     blacklist_str = "\n".join(["- " + item for item in blacklist])
     
     prompt_parts = [
         "生成", date_range, " AI日报资讯，共30条，严格遵循以下所有规则，不得有任何偏差：\n",
-        "1. 【全文结构固定·顺序不可变】全文必须严格按照以下顺序生成：\n",
+        "1. 【全文结构固定·顺序不可变】全文必须严格按照以下顺序生成，全部使用标准Markdown格式：\n",
         "   第一部分：核心资讯总览目录\n",
         "   第二部分：分模块详细资讯内容\n",
         "   第三部分：去重指纹列表\n",
         "\n",
         "2. 【第一部分：核心资讯总览目录·强制规则】\n",
-        "   - 目录标题固定为：一、核心资讯总览目录\n",
+        "   - 标题固定为：## 一、核心资讯总览目录\n",
         "   - 目录共30条，和后文30条资讯一一对应，序号完全一致\n",
-        "   - 单条目录格式：序号. 核心标题，单条内容严格控制在20个汉字以内，禁止超字数\n",
+        "   - 单条目录格式：`序号. 核心标题`，单条内容严格控制在20个汉字以内，禁止超字数\n",
         "   - 正确目录示例：\n",
         "     1. 荣耀发布Magic UI 9 AI版系统\n",
         "     2. 字节跳动发布豆包4.5多模态模型\n",
         "     3. 智谱AI发布多模态增强版大模型\n",
         "\n",
         "3. 【第二部分：分模块详细资讯·强制规则】\n",
-        "   - 固定分6大模块，模块顺序固定为：二、大模型与技术突破（8条）、三、算力与硬件（6条）、四、医疗与科学AI（5条）、五、资本与产业（5条）、六、安全与监管（3条）、七、端侧与应用（3条）\n",
+        "   - 固定分6大模块，模块顺序固定，标题使用标准Markdown二级标题：\n",
+        "     ## 二、大模型与技术突破（8条）\n",
+        "     ## 三、算力与硬件（6条）\n",
+        "     ## 四、医疗与科学AI（5条）\n",
+        "     ## 五、资本与产业（5条）\n",
+        "     ## 六、安全与监管（3条）\n",
+        "     ## 七、端侧与应用（3条）\n",
         "   - 【格式最高优先级】彻底删除「事件时间」字段，单条资讯必须严格按照以下固定格式输出，段落之间必须空一行，绝对禁止用|符号拼接内容，绝对禁止把多个字段挤在同一行：\n",
         "   【正确单条资讯格式示例】\n",
-        "   28. 荣耀发布Magic UI 9 AI版系统\n",
+        "   ### 1. 字节跳动发布豆包4.5多模态模型\n",
         "\n",
-        "   核心内容：荣耀正式发布Magic UI 9 AI版操作系统，内置自研端侧AI大模型“YOYO大模型4.0”，仅5B参数，支持离线语音交互、图像理解、文档处理、自动化操作全功能，可在手机、平板、笔记本、智能家居设备上跨端协同运行，响应速度较前代提升8倍，功耗降低55%。\n",
+        "   **核心内容**：**字节跳动**正式发布**豆包4.5多模态大模型**，支持128K上下文窗口，图像理解准确率较上一代提升27%，视频生成分辨率最高可达4K 60帧\n",
         "\n",
-        "   核心影响：推动端侧AI在消费电子领域的规模化落地，重构了移动终端的人机交互范式，完善了荣耀全场景AI生态布局。\n",
+        "   **核心影响**：填补了国内大模型4K实时视频生成的技术空白\n",
         "\n",
-        "   可验证信源：荣耀官方公告、IT之家、爱范儿\n",
+        "   **可验证信源**：字节跳动官方公众号、IT之家、36氪\n",
         "\n",
-        "   - 【标题强制规则】每条资讯的第一个字段必须是「序号. 标题」，标题必须和前文核心资讯总览目录里的对应标题完全一致，不得修改\n",
-        "   - 【段落规则】大模块之间必须空两行，每条资讯之间必须空一行，不得出现连续无换行的密集内容\n",
-        "   - 【加粗规则】核心内容里的关键主体、核心产品/版本号、关键数值、核心性能指标、核心结论必须加粗，其余内容不得随意加粗\n",
+        "   - 【标题强制规则】每条资讯的标题必须是三级Markdown标题`### 序号. 标题`，标题必须和前文核心资讯总览目录里的对应标题完全一致，不得修改\n",
+        "   - 【加粗规则】核心内容里的关键主体、核心产品/版本号、关键数值、核心性能指标、核心结论必须用**包裹加粗，字段名「核心内容」「核心影响」「可验证信源」也必须加粗\n",
         "   - 【信源合规规则】仅对境内有准确可跳转地址的内容加超链接，境外来源、无准确可跳转地址的内容，仅标注来源名称，绝不配置任何无效超链接\n",
         "\n",
         "4. 【终身去重·最高优先级】绝对不能出现以下去重库中的任何事件，哪怕换表述、补细节、换角度也不行：\n",
@@ -85,12 +218,16 @@ def build_prompt(date_range, blacklist):
         "5. 【质量规则】仅选用官方公告、国家级媒体、头部财经科技媒体的一手报道，严格剔除抖音、个人自媒体、非权威来源内容\n",
         "\n",
         "6. 【第三部分：去重指纹列表规则】生成完所有资讯后，在全文最后单独列出本次所有资讯的「去重指纹」，格式为：\n",
-        "---去重指纹列表---\n事件核心主体_核心动作\n事件核心主体_核心动作\n...（共30条，和前面的资讯一一对应）\n"
+        "---\n",
+        "### 去重指纹列表\n",
+        "事件核心主体_核心动作\n",
+        "事件核心主体_核心动作\n",
+        "...（共30条，和前面的资讯一一对应）\n"
     ]
     return "".join(prompt_parts)
 
 def generate_ai_news(blacklist):
-    """调用豆包API生成资讯，优化生成稳定性与内容长度"""
+    """调用豆包API生成标准Markdown格式的资讯"""
     PROMPT_RULE = build_prompt(date_range_str, blacklist)
 
     headers = {
@@ -100,7 +237,7 @@ def generate_ai_news(blacklist):
     data = {
         "model": DOUBAO_ENDPOINT_ID,
         "messages": [
-            {"role": "system", "content": "你是专业的AI行业日报分析师，严格按照用户给定的格式规则生成内容，格式合规是最高优先级要求，绝对禁止违规拼接内容，终身去重规则必须严格遵守，标题与目录必须一一对应"},
+            {"role": "system", "content": "你是专业的AI行业日报分析师，严格按照用户给定的Markdown格式规则生成内容，格式合规是最高优先级要求，绝对禁止违规拼接内容，终身去重规则必须严格遵守，标题与目录必须一一对应"},
             {"role": "user", "content": PROMPT_RULE}
         ],
         "temperature": 0.6,
@@ -116,68 +253,51 @@ def generate_ai_news(blacklist):
         # 分离资讯内容和去重指纹
         news_content = full_content
         new_fingerprints = []
-        if "---去重指纹列表---" in full_content:
-            parts = full_content.split("---去重指纹列表---", 1)
+        if "### 去重指纹列表" in full_content:
+            parts = full_content.split("### 去重指纹列表", 1)
             news_content = parts[0]
             fingerprints_part = parts[1].strip()
-            new_fingerprints = [line.strip() for line in fingerprints_part.split("\n") if line.strip()]
+            new_fingerprints = [line.strip() for line in fingerprints_part.split("\n") if line.strip() and not line.startswith("---")]
         
-        print("✅ 资讯生成成功，内容长度：", len(news_content))
+        # 给全文加上主标题
+        full_markdown = f"# {today_str} 每日AI专属日报\n\n" + news_content
+        
+        print("✅ 资讯生成成功，内容长度：", len(full_markdown))
         print("✅ 提取到", len(new_fingerprints), "条新去重指纹")
         
-        # 保存资讯文件
+        # 保存Markdown源文件
         try:
             with open(today_str + "_AI日报.md", "w", encoding="utf-8") as f:
-                f.write(news_content)
+                f.write(full_markdown)
         except:
             pass
         
-        return news_content, new_fingerprints
+        return full_markdown, new_fingerprints
     except Exception as e:
         print("❌ 资讯生成失败：", str(e))
         return None, []
 
-def send_email(news_content):
-    """【优化HTML样式】适配新增目录，兼容QQ邮箱，段落更清晰"""
-    # 构建HTML内容，新增目录专属样式，优化段落间距
-    email_html_parts = [
-        "<html><head><meta charset='UTF-8'><title>", today_str, " 每日AI专属日报</title>",
-        "<style>",
-        "body { font-family: '微软雅黑', 'PingFang SC', Arial; line-height: 1.8; color: #333; max-width: 900px; margin: 0 auto; padding: 20px; }",
-        "h1 { text-align: center; color: #2c3e50; margin-bottom: 40px; }",
-        ".module-title { font-size: 22px; font-weight: bold; color: #2c3e50; margin: 35px 0 20px 0; padding-bottom: 8px; border-bottom: 2px solid #3498db; }",
-        ".catalog-box { background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0; }",
-        ".catalog-item { line-height: 2; font-size: 15px; }",
-        ".news-item { margin: 30px 0; }",
-        ".news-title { font-size: 17px; font-weight: 600; color: #2c3e50; margin-bottom: 15px; }",
-        "p { margin: 12px 0; text-align: justify; }",
-        "strong { color: #e74c3c; font-weight: 600; }",
-        "a { color: #3498db; text-decoration: none; }",
-        "hr { border: none; border-top: 1px solid #eee; margin: 30px 0; }",
-        "</style></head><body>",
-        "<h1>", today_str, " 每日AI专属日报</h1>",
-        "<div class='main-content'>",
-        news_content.replace('\n\n', '</p><p>').replace('\n', '<br>'),
-        "</div>",
-        "<div style='margin-top: 60px; padding-top: 20px; border-top: 1px solid #eee; color: #999; font-size: 12px; text-align: center;'>",
-        "本日报由豆包大模型自动生成，严格遵循终身去重规则，每日定时推送",
-        "</div></body></html>"
-    ]
-    email_html = "".join(email_html_parts)
+def send_email(markdown_content):
+    """【优化】支持多收件人，用专业Markdown转HTML渲染，兼容QQ邮箱"""
+    # 核心：用专业函数把Markdown转为带样式的完整HTML
+    email_html = markdown_to_html_document(markdown_content)
     
-    # QQ邮箱完全兼容的邮件配置
+    # 【支持多收件人】自动拆分邮箱地址
+    receiver_list = [email.strip() for email in RECEIVER_EMAIL.split(',')]
+    
+    # 配置邮件（QQ邮箱完全兼容格式）
     message = MIMEText(email_html, 'html', 'utf-8')
     message['From'] = SENDER_EMAIL
     message['To'] = RECEIVER_EMAIL
-    message['Subject'] = Header(today_str + " 每日AI专属日报", 'utf-8')
+    message['Subject'] = Header(f"{today_str} 每日AI专属日报", 'utf-8')
 
     try:
-        print("✅ 开始发送邮件...")
+        print("✅ 开始发送邮件，收件人：", receiver_list)
         smtp_obj = smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT, timeout=30)
         smtp_obj.login(SENDER_EMAIL, EMAIL_AUTH_CODE)
-        smtp_obj.sendmail(SENDER_EMAIL, [RECEIVER_EMAIL], message.as_string())
+        smtp_obj.sendmail(SENDER_EMAIL, receiver_list, message.as_string())
         smtp_obj.quit()
-        print("✅ 邮件发送成功，已推送至：", RECEIVER_EMAIL)
+        print("✅ 邮件发送成功，已推送至所有收件人")
         return True
     except Exception as e:
         print("❌ 邮件发送失败：", str(e))
