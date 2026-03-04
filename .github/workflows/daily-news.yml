@@ -4,6 +4,10 @@ on:
     - cron: '0 1 * * *' # 北京时间每天9:00
   workflow_dispatch:
 
+# 核心修改1：给GitHub Actions写入仓库的权限
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -11,14 +15,12 @@ jobs:
       - name: 检出仓库代码
         uses: actions/checkout@v4
         with:
-          persist-credentials: false # 必须设为false，否则无法用token提交
           fetch-depth: 0
 
       - name: 设置Python 3.10环境
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-          cache: 'pip'
 
       - name: 安装Python依赖
         run: |
@@ -35,11 +37,11 @@ jobs:
           SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
         run: python news_generator.py
 
-      - name: 提交更新后的去重库回仓库
+      # 核心修改2：只提交去重库，不提交资讯文件（避开文件名乱码问题）
+      - name: 仅更新去重库（不提交资讯文件）
         run: |
-          git config --global user.name "GitHub Actions"
-          git config --global user.email "actions@github.com"
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git add news_blacklist.json
-          git add *.md 2>/dev/null || true # 可选：同时归档资讯文件
-          git commit -m "feat: 更新去重库（新增今日资讯指纹）" || echo "没有新内容需要提交"
-          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git HEAD:${{ github.ref }}
+          git commit -m "feat: 更新去重库（新增今日资讯指纹）" || echo "去重库无变化，无需提交"
+          git push
