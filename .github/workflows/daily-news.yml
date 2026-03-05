@@ -1,7 +1,7 @@
 name: 每日AI资讯自动推送（含终身去重）
 on:
   schedule:
-    - cron: '0 1 * * *' # 北京时间每天9:00
+    - cron: '0 23 * * *' # 北京时间每天7:00
   workflow_dispatch:
 
 # 核心修改1：给GitHub Actions写入仓库的权限
