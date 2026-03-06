@@ -257,9 +257,14 @@ def generate_ai_news(blacklist):
         "temperature": 0.6,
         "max_tokens": 16000,
         "stream": False,
-        "enable_search": True,
-        "search_options": {
-        "search_time_range": "1d"  # 强制只搜索过去24小时内的内容，和你的日报时间范围完全匹配
+        "tools": [{
+            "type": "web_search",
+            "search_time_range": "1d",  # 强制仅搜索过去24小时内容
+            "max_keyword": 3,           # 单轮最多触发3个关键词搜索
+            "limit": 15                 # 单次搜索最多返回15条结果
+        }],
+        # 可选：强制优先使用搜索结果，提升信息时效性
+        "tool_choice": "auto"
         }
     }
     try:
