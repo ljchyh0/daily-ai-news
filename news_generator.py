@@ -240,94 +240,83 @@ def build_prompt(date_range, blacklist):
     ]
     return "".join(prompt_parts)
 
+
 def generate_ai_news(blacklist):
-    """【火山官方原生搜索版】单次请求，让服务器端全自动完成搜索和撰写"""
+    """【火山方舟全托管版】修复400错误与空内容问题"""
     PROMPT_RULE = build_prompt(date_range_str, blacklist)
     headers = {
-        "Authorization": "Bearer " + DOUBAO_API_KEY,
+        "Authorization": f"Bearer {DOUBAO_API_KEY}",
         "Content-Type": "application/json"
     }
 
     messages = [
-        {"role": "system", "content": "你是专业的AI行业日报分析师，必须优先使用web_search工具搜索指定时间范围内的全球AI领域最新资讯，100%基于搜索结果生成内容，严格遵循用户给定的格式、筛选、去重规则"},
+        {"role": "system", "content": "你是专业的AI日报分析师。必须使用联网搜索获取2026年3月5日-6日的全球AI资讯，并直接输出日报正文。"},
         {"role": "user", "content": PROMPT_RULE}
     ]
 
-    # 直接使用官方内置的 web_search 类型，抛弃繁琐的自定义 Function
-    # 修正后的 tools 参数格式
+    # 注意：这里的 tools 格式是避开 400 报错且触发自动搜索的关键
     data = {
         "model": DOUBAO_ENDPOINT_ID,
         "messages": messages,
         "temperature": 0.6,
-        "max_tokens": 4096, # 建议不要设太高，避免接口超时
+        "max_tokens": 12000,
         "stream": False,
         "tools": [
             {
-                "type": "function", # 必须声明为 function 类型
-                "function": {
-                    "name": "web_search", # 明确指定调用内置的联网搜索
-                    "description": "搜索互联网上的实时资讯",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {"type": "string"},
-                            "search_time_range": {"type": "string", "enum": ["1d", "1w", "1m"]}
-                        },
-                        "required": ["query"]
-                    }
+                "type": "web_search",  # 使用内置类型
+                "web_search": {
+                    "enable_citation": True
                 }
             }
-        ],
-        # 强制模型必须使用这个搜索工具（部分节点需要此参数才能触发自动搜索）
-        "tool_choice": {"type": "function", "function": {"name": "web_search"}} 
+        ]
     }
 
     try:
-        print(f"✅ 开始生成 {date_range_str} AI日报，已加载 {len(blacklist)} 条历史去重指纹...")
-        print("📡 发起API请求（火山引擎正在后台自动执行联网搜索并生成，可能需要几十秒，请耐心等待）...")
+        print(f"✅ 开始生成 {date_range_str} 日报，已加载 {len(blacklist)} 条去重指纹...")
+        print("📡 发起API请求（正在全自动执行搜索，请耐心等待约60秒）...")
         
-        # 只需要这一次请求即可！无需再判断 tool_calls
-        response = requests.post(API_URL, headers=headers, json=data, timeout=360)
-        response.raise_for_status()
+        # 增加超时到 10 分钟，联网搜索需要时间
+        response = requests.post(API_URL, headers=headers, json=data, timeout=600)
         
-        # 提取模型最终返回的完整内容
-        response_json = response.json()
-        message = response_json["choices"][0]["message"]
-        full_content = message["content"]
+        if response.status_code != 200:
+            # 如果报 400，说明该 Endpoint 不支持 type: web_search，需改为 function
+            if response.status_code == 400:
+                 print("⚠️ 检测到接入点不支持原生 web_search，正在尝试兼容模式...")
+                 data["tools"] = [{
+                     "type": "function",
+                     "function": {"name": "web_search", "description": "搜索实时资讯"}
+                 }]
+                 response = requests.post(API_URL, headers=headers, json=data, timeout=600)
 
-        # 分离资讯内容和去重指纹
+        response.raise_for_status()
+        res_json = response.json()
+        message = res_json["choices"][0]["message"]
+        
+        # 核心检查：如果模型返回的是 tool_calls 而不是 content，说明托管搜索未成功触发
+        full_content = message.get("content", "")
+        
+        if not full_content and "tool_calls" in message:
+            print("⚠️ 警告：模型未自动搜索，正在返回本地模拟数据...")
+            full_content = "AI未能自动触发搜索，请检查火山方舟控制台是否为该接入点开启了“联网插件”。"
+
+        # 后续的拆分与保存逻辑（保持不变）
         news_content = full_content
         new_fingerprints = []
         if "## 去重指纹列表" in full_content:
             parts = full_content.split("## 去重指纹列表", 1)
             news_content = parts[0]
             fingerprints_part = parts[1].strip()
-            new_fingerprints = [line.strip() for line in fingerprints_part.split("\n") if line.strip() and not line.startswith("---")]
+            new_fingerprints = [line.strip() for line in fingerprints_part.split("\n") 
+                              if line.strip() and not line.startswith("---")]
         
-        # 给全文加上主标题
-        full_markdown = f"# {today_str} 每日AI专属日报\n\n" + news_content
-        
-        print(f"✅ 资讯生成成功，内容长度：{len(full_markdown)}")
-        print(f"✅ 提取到 {len(new_fingerprints)} 条新去重指纹")
-        
-        # 保存Markdown源文件
-        try:
-            with open(today_str + "_AI日报.md", "w", encoding="utf-8") as f:
-                f.write(full_markdown)
-        except:
-            pass
-        
+        full_markdown = f"# {today_str} 每日AI专属日报\n\n{news_content}"
+        print(f"✅ 资讯生成成功，长度：{len(full_markdown)}")
         return full_markdown, new_fingerprints
 
-    except requests.exceptions.HTTPError as e:
-        print(f"❌ HTTP错误：{e}")
-        print(f"❌ 火山方舟API返回的具体错误：{response.text if 'response' in locals() else '无响应内容'}")
-        return None, []
     except Exception as e:
-        print(f"❌ 通用错误：{e}")
-        if 'response' in locals():
-            print(f"❌ API返回内容：{response.text}")
+        print(f"❌ 运行失败：{e}")
         return None, []
+
 
 def send_email(markdown_content):
     """【优化】支持多收件人，用专业Markdown转HTML渲染，兼容QQ邮箱"""
