@@ -248,42 +248,42 @@ def generate_ai_news(blacklist):
         "Authorization": "Bearer " + DOUBAO_API_KEY,
         "Content-Type": "application/json"
     }
-data = {
-    "model": DOUBAO_ENDPOINT_ID,
-    "messages": [
-        {"role": "system", "content": "你是专业的AI行业日报分析师，必须优先使用web_search工具搜索指定时间范围内的全球AI领域最新资讯，100%基于搜索结果生成内容，严格遵循用户给定的格式、筛选、去重规则"},
-        {"role": "user", "content": PROMPT_RULE}
-    ],
-    "temperature": 0.6,
-    "max_tokens": 15000,
-    "stream": False,
-    # 【火山方舟官方正确格式】web_search必须封装在function里
-    "tools": [
-        {
-            "type": "function",
-            "function": {
-                "name": "web_search",
-                "description": "搜索互联网获取最新资讯",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "搜索关键词"
+    data = {
+        "model": DOUBAO_ENDPOINT_ID,
+        "messages": [
+            {"role": "system", "content": "你是专业的AI行业日报分析师，必须优先使用web_search工具搜索指定时间范围内的全球AI领域最新资讯，100%基于搜索结果生成内容，严格遵循用户给定的格式、筛选、去重规则"},
+            {"role": "user", "content": PROMPT_RULE}
+        ],
+        "temperature": 0.6,
+        "max_tokens": 15000,
+        "stream": False,
+        # 【火山方舟官方正确格式】web_search必须封装在function里
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "web_search",
+                    "description": "搜索互联网获取最新资讯",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "搜索关键词"
+                            },
+                            "search_time_range": {
+                                "type": "string",
+                                "description": "搜索时间范围，可选值：1d（1天）、1w（1周）、1m（1月）",
+                                "default": "1d"
+                            }
                         },
-                        "search_time_range": {
-                            "type": "string",
-                            "description": "搜索时间范围，可选值：1d（1天）、1w（1周）、1m（1月）",
-                            "default": "1d"
-                        }
-                    },
-                    "required": ["query"]
+                        "required": ["query"]
+                    }
                 }
             }
-        }
-    ],
-    "tool_choice": "auto"
-}
+        ],
+        "tool_choice": "auto"
+    }
     try:
         print("✅ 开始生成", date_range_str, " AI日报，已加载", len(blacklist), "条历史去重指纹...")
         response = requests.post(API_URL, headers=headers, json=data, timeout=360)
