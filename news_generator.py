@@ -265,7 +265,6 @@ def generate_ai_news(blacklist):
         }],
         # 可选：强制优先使用搜索结果，提升信息时效性
         "tool_choice": "auto"
-        }
     }
     try:
         print("✅ 开始生成", date_range_str, " AI日报，已加载", len(blacklist), "条历史去重指纹...")
