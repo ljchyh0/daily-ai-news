@@ -241,23 +241,26 @@ def build_prompt(date_range, blacklist):
     return "".join(prompt_parts)
 
 def generate_ai_news(blacklist):
-    """调用豆包API生成标准Markdown格式的资讯"""
+    """【完整联网搜索版】处理多轮工具调用，获取搜索结果后生成最终资讯"""
     PROMPT_RULE = build_prompt(date_range_str, blacklist)
-
     headers = {
         "Authorization": "Bearer " + DOUBAO_API_KEY,
         "Content-Type": "application/json"
     }
+
+    # 第一轮对话：发起请求，让模型决定是否调用搜索工具
+    messages = [
+        {"role": "system", "content": "你是专业的AI行业日报分析师，必须优先使用web_search工具搜索指定时间范围内的全球AI领域最新资讯，100%基于搜索结果生成内容，严格遵循用户给定的格式、筛选、去重规则"},
+        {"role": "user", "content": PROMPT_RULE}
+    ]
+
     data = {
         "model": DOUBAO_ENDPOINT_ID,
-        "messages": [
-            {"role": "system", "content": "你是专业的AI行业日报分析师，必须优先使用web_search工具搜索指定时间范围内的全球AI领域最新资讯，100%基于搜索结果生成内容，严格遵循用户给定的格式、筛选、去重规则"},
-            {"role": "user", "content": PROMPT_RULE}
-        ],
+        "messages": messages,
         "temperature": 0.6,
         "max_tokens": 15000,
         "stream": False,
-        # 【火山方舟官方正确格式】web_search必须封装在function里
+        # 火山方舟官方正确的web_search工具配置
         "tools": [
             {
                 "type": "function",
@@ -284,17 +287,75 @@ def generate_ai_news(blacklist):
         ],
         "tool_choice": "auto"
     }
+
     try:
         print("✅ 开始生成", date_range_str, " AI日报，已加载", len(blacklist), "条历史去重指纹...")
+        print("📡 发起第一轮API请求，等待模型响应...")
         response = requests.post(API_URL, headers=headers, json=data, timeout=360)
         response.raise_for_status()
-        full_content = response.json()["choices"][0]["message"]["content"]
-        
+        response_json = response.json()
+        choice = response_json["choices"][0]
+        message = choice["message"]
+
+        # 【核心逻辑】如果模型要求调用工具，就执行搜索
+        if "tool_calls" in message and message["tool_calls"]:
+            print("🔍 模型发起搜索工具调用，正在执行搜索...")
+            tool_call = message["tool_calls"][0]
+            function_args = json.loads(tool_call["function"]["arguments"])
+            search_query = function_args.get("query", f"{date_range_str} 全球AI领域最新资讯 大模型 算力 技术突破")
+            search_time_range = function_args.get("search_time_range", "1d")
+
+            # 执行web_search，调用火山方舟搜索接口
+            search_data = {
+                "model": DOUBAO_ENDPOINT_ID,
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "web_search",
+                            "parameters": {
+                                "query": search_query,
+                                "search_time_range": search_time_range,
+                                "limit": 20
+                            }
+                        }
+                    }
+                ]
+            }
+            search_response = requests.post(API_URL, headers=headers, json=search_data, timeout=60)
+            search_response.raise_for_status()
+            search_result = search_response.json()
+
+            # 把搜索结果回传给模型
+            messages.append(message)
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tool_call["id"],
+                "name": "web_search",
+                "content": json.dumps(search_result, ensure_ascii=False)
+            })
+
+            # 第二轮对话：用搜索结果生成最终内容
+            print("✅ 搜索完成，正在基于搜索结果生成资讯...")
+            second_data = {
+                "model": DOUBAO_ENDPOINT_ID,
+                "messages": messages,
+                "temperature": 0.6,
+                "max_tokens": 15000,
+                "stream": False
+            }
+            second_response = requests.post(API_URL, headers=headers, json=second_data, timeout=360)
+            second_response.raise_for_status()
+            full_content = second_response.json()["choices"][0]["message"]["content"]
+        else:
+            # 模型没有调用工具，直接返回了内容
+            full_content = message["content"]
+
         # 分离资讯内容和去重指纹
         news_content = full_content
         new_fingerprints = []
-        if "### 去重指纹列表" in full_content:
-            parts = full_content.split("### 去重指纹列表", 1)
+        if "## 去重指纹列表" in full_content:
+            parts = full_content.split("## 去重指纹列表", 1)
             news_content = parts[0]
             fingerprints_part = parts[1].strip()
             new_fingerprints = [line.strip() for line in fingerprints_part.split("\n") if line.strip() and not line.startswith("---")]
@@ -313,6 +374,7 @@ def generate_ai_news(blacklist):
             pass
         
         return full_markdown, new_fingerprints
+
     except requests.exceptions.HTTPError as e:
         print(f"❌ HTTP错误：{e}")
         print(f"❌ 火山方舟API返回的具体错误：{response.text if 'response' in locals() else '无响应内容'}")
