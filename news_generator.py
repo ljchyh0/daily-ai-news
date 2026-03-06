@@ -295,8 +295,14 @@ def generate_ai_news(blacklist):
             pass
         
         return full_markdown, new_fingerprints
+    except requests.exceptions.HTTPError as e:
+        print(f"❌ HTTP错误：{e}")
+        print(f"❌ 火山方舟API返回的具体错误：{response.text if 'response' in locals() else '无响应内容'}")
+        return None, []
     except Exception as e:
-        print("❌ 资讯生成失败：", str(e))
+        print(f"❌ 通用错误：{e}")
+        if 'response' in locals():
+            print(f"❌ API返回内容：{response.text}")
         return None, []
 
 def send_email(markdown_content):
