@@ -241,115 +241,44 @@ def build_prompt(date_range, blacklist):
     return "".join(prompt_parts)
 
 def generate_ai_news(blacklist):
-    """【完整联网搜索版】处理多轮工具调用，获取搜索结果后生成最终资讯"""
+    """【火山官方原生搜索版】单次请求，让服务器端全自动完成搜索和撰写"""
     PROMPT_RULE = build_prompt(date_range_str, blacklist)
     headers = {
         "Authorization": "Bearer " + DOUBAO_API_KEY,
         "Content-Type": "application/json"
     }
 
-    # 第一轮对话：发起请求，让模型决定是否调用搜索工具
     messages = [
         {"role": "system", "content": "你是专业的AI行业日报分析师，必须优先使用web_search工具搜索指定时间范围内的全球AI领域最新资讯，100%基于搜索结果生成内容，严格遵循用户给定的格式、筛选、去重规则"},
         {"role": "user", "content": PROMPT_RULE}
     ]
 
+    # 直接使用官方内置的 web_search 类型，抛弃繁琐的自定义 Function
     data = {
         "model": DOUBAO_ENDPOINT_ID,
         "messages": messages,
         "temperature": 0.6,
         "max_tokens": 15000,
         "stream": False,
-        # 火山方舟官方正确的web_search工具配置
         "tools": [
             {
-                "type": "function",
-                "function": {
-                    "name": "web_search",
-                    "description": "搜索互联网获取最新资讯",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {
-                                "type": "string",
-                                "description": "搜索关键词"
-                            },
-                            "search_time_range": {
-                                "type": "string",
-                                "description": "搜索时间范围，可选值：1d（1天）、1w（1周）、1m（1月）",
-                                "default": "1d"
-                            }
-                        },
-                        "required": ["query"]
-                    }
-                }
+                "type": "web_search"  # <--- 核心修改在这里！直接声明使用内置搜索
             }
-        ],
-        "tool_choice": "auto"
+        ]
     }
 
     try:
-        print("✅ 开始生成", date_range_str, " AI日报，已加载", len(blacklist), "条历史去重指纹...")
-        print("📡 发起第一轮API请求，等待模型响应...")
+        print(f"✅ 开始生成 {date_range_str} AI日报，已加载 {len(blacklist)} 条历史去重指纹...")
+        print("📡 发起API请求（火山引擎正在后台自动执行联网搜索并生成，可能需要几十秒，请耐心等待）...")
+        
+        # 只需要这一次请求即可！无需再判断 tool_calls
         response = requests.post(API_URL, headers=headers, json=data, timeout=360)
         response.raise_for_status()
+        
+        # 提取模型最终返回的完整内容
         response_json = response.json()
-        choice = response_json["choices"][0]
-        message = choice["message"]
-
-        # 【核心逻辑】如果模型要求调用工具，就执行搜索
-        if "tool_calls" in message and message["tool_calls"]:
-            print("🔍 模型发起搜索工具调用，正在执行搜索...")
-            tool_call = message["tool_calls"][0]
-            function_args = json.loads(tool_call["function"]["arguments"])
-            search_query = function_args.get("query", f"{date_range_str} 全球AI领域最新资讯 大模型 算力 技术突破")
-            search_time_range = function_args.get("search_time_range", "1d")
-
-            # 执行web_search，调用火山方舟搜索接口
-            search_data = {
-                "model": DOUBAO_ENDPOINT_ID,
-                "tools": [
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": "web_search",
-                            "parameters": {
-                                "query": search_query,
-                                "search_time_range": search_time_range,
-                                "limit": 20
-                            }
-                        }
-                    }
-                ]
-            }
-            search_response = requests.post(API_URL, headers=headers, json=search_data, timeout=60)
-            search_response.raise_for_status()
-            search_result = search_response.json()
-
-            # 把搜索结果回传给模型
-            messages.append(message)
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tool_call["id"],
-                "name": "web_search",
-                "content": json.dumps(search_result, ensure_ascii=False)
-            })
-
-            # 第二轮对话：用搜索结果生成最终内容
-            print("✅ 搜索完成，正在基于搜索结果生成资讯...")
-            second_data = {
-                "model": DOUBAO_ENDPOINT_ID,
-                "messages": messages,
-                "temperature": 0.6,
-                "max_tokens": 15000,
-                "stream": False
-            }
-            second_response = requests.post(API_URL, headers=headers, json=second_data, timeout=360)
-            second_response.raise_for_status()
-            full_content = second_response.json()["choices"][0]["message"]["content"]
-        else:
-            # 模型没有调用工具，直接返回了内容
-            full_content = message["content"]
+        message = response_json["choices"][0]["message"]
+        full_content = message["content"]
 
         # 分离资讯内容和去重指纹
         news_content = full_content
@@ -363,8 +292,8 @@ def generate_ai_news(blacklist):
         # 给全文加上主标题
         full_markdown = f"# {today_str} 每日AI专属日报\n\n" + news_content
         
-        print("✅ 资讯生成成功，内容长度：", len(full_markdown))
-        print("✅ 提取到", len(new_fingerprints), "条新去重指纹")
+        print(f"✅ 资讯生成成功，内容长度：{len(full_markdown)}")
+        print(f"✅ 提取到 {len(new_fingerprints)} 条新去重指纹")
         
         # 保存Markdown源文件
         try:
