@@ -254,17 +254,32 @@ def generate_ai_news(blacklist):
     ]
 
     # 直接使用官方内置的 web_search 类型，抛弃繁琐的自定义 Function
+    # 修正后的 tools 参数格式
     data = {
         "model": DOUBAO_ENDPOINT_ID,
         "messages": messages,
         "temperature": 0.6,
-        "max_tokens": 15000,
+        "max_tokens": 4096, # 建议不要设太高，避免接口超时
         "stream": False,
         "tools": [
             {
-                "type": "web_search"  # <--- 核心修改在这里！直接声明使用内置搜索
+                "type": "function", # 必须声明为 function 类型
+                "function": {
+                    "name": "web_search", # 明确指定调用内置的联网搜索
+                    "description": "搜索互联网上的实时资讯",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string"},
+                            "search_time_range": {"type": "string", "enum": ["1d", "1w", "1m"]}
+                        },
+                        "required": ["query"]
+                    }
+                }
             }
-        ]
+        ],
+        # 强制模型必须使用这个搜索工具（部分节点需要此参数才能触发自动搜索）
+        "tool_choice": {"type": "function", "function": {"name": "web_search"}} 
     }
 
     try:
