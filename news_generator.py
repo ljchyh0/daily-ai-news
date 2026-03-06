@@ -256,7 +256,7 @@ def generate_ai_news(blacklist):
         ],
         "temperature": 0.6,
         "max_tokens": 16000,
-        "stream": False
+        "stream": False,
         "enable_search": True,
         "search_options": {
         "search_time_range": "1d"  # 强制只搜索过去24小时内的内容，和你的日报时间范围完全匹配
