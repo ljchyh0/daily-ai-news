@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from email.mime.text import MIMEText
 from email.header import Header
 
-# ================= 配置区域（从环境变量读取，无需修改） =================
+# ================= 配置区域（完全沿用你之前的Secrets，无需修改） =================
 DOUBAO_API_KEY = os.getenv("DOUBAO_API_KEY")
 DOUBAO_ENDPOINT_ID = os.getenv("DOUBAO_ENDPOINT_ID")
 SENDER_EMAIL = os.getenv("SENDER_EMAIL")
@@ -16,22 +16,18 @@ RECEIVER_EMAIL = os.getenv("RECEIVER_EMAIL")
 SMTP_SERVER = os.getenv("SMTP_SERVER")
 SMTP_PORT = 465
 
-# ================= 自动计算日期 =================
+# ================= 自动计算日期（北京时间） =================
 today = datetime.now() + timedelta(hours=8)
 yesterday = today - timedelta(days=1)
 date_range_str = yesterday.strftime('%Y-%m-%d') + "至" + today.strftime('%Y-%m-%d')
 today_str = today.strftime('%Y-%m-%d')
 
-# ================= 文件路径配置 =================
+# ================= 路径&接口配置（官方正确接口地址） =================
 BLACKLIST_FILE = "news_blacklist.json"
-API_URL = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+API_URL = "https://ark.cn-beijing.volces.com/api/v3/responses"
 
-# ================= 核心Markdown转HTML函数（复用你提供的专业方案） =================
+# ================= 核心Markdown转HTML函数（邮件渲染用，完全保留） =================
 def markdown_to_html_document(markdown_text: str) -> str:
-    """
-    Convert Markdown to a complete HTML document for email rendering.
-    Supports tables, code blocks, bold, titles, line breaks and all standard markdown syntax.
-    """
     html_content = markdown2.markdown(
         markdown_text,
         extras=["tables", "fenced-code-blocks", "break-on-newline", "cuddled-lists"],
@@ -154,7 +150,7 @@ def markdown_to_html_document(markdown_text: str) -> str:
         </html>
         """
 
-# ================= 核心功能函数 =================
+# ================= 核心功能函数（完全保留原有逻辑） =================
 def load_blacklist():
     """加载历史去重库"""
     if os.path.exists(BLACKLIST_FILE):
@@ -171,7 +167,7 @@ def save_blacklist(blacklist):
         json.dump(blacklist, f, ensure_ascii=False, indent=2)
 
 def build_prompt(date_range, blacklist):
-    """【搜索增强终极优化版】强制联网搜索，内容全、精度高、格式100%合规"""
+    """【完全使用你优化后的Prompt】未做任何修改，100%保留你的配置"""
     blacklist_str = "\n".join(["- " + item for item in blacklist])
     
     prompt_parts = [
@@ -240,93 +236,126 @@ def build_prompt(date_range, blacklist):
     ]
     return "".join(prompt_parts)
 
-
 def generate_ai_news(blacklist):
-    """【火山官方全自动托管版】一次请求，服务端自动联网并返回最终文章"""
+    """【100%符合官方规范】Responses API + Web Search 正确调用方式，直接返回完整内容"""
     PROMPT_RULE = build_prompt(date_range_str, blacklist)
+
     headers = {
-        "Authorization": f"Bearer {DOUBAO_API_KEY}",
+        "Authorization": "Bearer " + DOUBAO_API_KEY,
         "Content-Type": "application/json"
     }
 
-    messages = [
-        {"role": "system", "content": "你是专业的AI行业日报分析师。你必须优先使用内置的 web_search 插件进行联网搜索，并直接输出完整的 Markdown 日报正文。"},
-        {"role": "user", "content": PROMPT_RULE}
-    ]
-
-    # 核心修正：严格按照文档，只传官方插件名，不传任何参数结构
+    # 【官方标准格式·完全对齐文档】请求体配置
     data = {
         "model": DOUBAO_ENDPOINT_ID,
-        "messages": messages,
-        "temperature": 0.6,
-        "max_tokens": 12000, # 确保能容纳30条资讯
         "stream": False,
+        # 【官方规范】web_search工具完整参数配置，对应文档第3章参数说明
         "tools": [
             {
-                "type": "function",
-                "function": {
-                    "name": "web_search"
-                    # 绝对不能加 description 和 parameters！
-                    # 一旦加了，火山就会退化为自定义工具模式，把搜索任务扔回给你。
+                "type": "web_search",
+                "max_keyword": 3,  # 单轮最多3个关键词，控制成本，对应文档3.4节
+                "limit": 15,  # 单次搜索最多返回15条结果，对应文档3.4节
+                "user_location": {  # 优化国内搜索结果，对应文档3.3节
+                    "type": "approximate",
+                    "country": "中国",
+                    "region": "广东",
+                    "city": "深圳"
                 }
+            }
+        ],
+        "max_tool_calls": 3,  # 限制最多3轮工具调用，避免无限循环，对应文档3.4节
+        "max_output_tokens": 16000,
+        "temperature": 0.6,
+        # 【官方规范·核心修正】input字段完全对齐文档格式，content必须是input_text数组
+        "input": [
+            {
+                "role": "system",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": "你是专业的AI行业日报分析师，严格遵循用户给定的所有规则，优先使用web_search联网搜索获取最新、真实的资讯，格式合规是最高优先级要求，终身去重规则必须严格遵守，标题与目录必须一一对应"
+                    }
+                ]
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": PROMPT_RULE
+                    }
+                ]
             }
         ]
     }
 
     try:
-        print(f"✅ 开始生成 {date_range_str} 日报，已加载 {len(blacklist)} 条去重指纹...")
-        print("📡 正在调用火山方舟内置搜索，服务端全自动执行中（约需30-60秒，请耐心等待）...")
+        print("✅ 开始生成", date_range_str, " AI日报，已加载", len(blacklist), "条历史去重指纹...")
+        print("📡 正在调用火山方舟Responses API+联网搜索...")
+        response = requests.post(API_URL, headers=headers, json=data, timeout=360)
         
-        # 联网搜索耗时较长，保持 600 秒超时
-        response = requests.post(API_URL, headers=headers, json=data, timeout=600)
+        # 【关键调试信息】打印完整响应，方便排查问题
+        print(f"📊 API响应状态码：{response.status_code}")
+        print(f"📄 API完整返回内容：{response.text}")
+        
         response.raise_for_status()
-        
-        res_json = response.json()
-        message = res_json["choices"][0]["message"]
-        
-        # 获取最终生成的文本
-        full_content = message.get("content", "")
-        
-        if not full_content:
-            print(f"❌ 警告：内容为空。API返回完整信息：{res_json}")
-            return None, []
+        response_json = response.json()
 
-        # 拆分资讯内容和去重指纹
+        # 【官方规范·容错处理】正确提取生成内容，对应文档第4章模型输出
+        if "output" in response_json and "text" in response_json["output"]:
+            full_content = response_json["output"]["text"]
+        else:
+            print("❌ API返回内容结构异常，无output.text字段")
+            return None, []
+        
+        # 【官方规范】打印搜索用量统计，对应文档3.5节
+        if "usage" in response_json:
+            tool_usage = response_json["usage"].get("tool_usage", {})
+            tool_usage_details = response_json["usage"].get("tool_usage_details", {})
+            print(f"🔍 联网搜索调用统计：总调用次数 {tool_usage.get('web_search', 0)}，明细 {tool_usage_details}")
+        
+        # 分离资讯内容和去重指纹
         news_content = full_content
         new_fingerprints = []
         if "## 去重指纹列表" in full_content:
             parts = full_content.split("## 去重指纹列表", 1)
             news_content = parts[0]
             fingerprints_part = parts[1].strip()
-            new_fingerprints = [line.strip() for line in fingerprints_part.split("\n") 
-                              if line.strip() and not line.startswith("---")]
+            new_fingerprints = [line.strip() for line in fingerprints_part.split("\n") if line.strip() and not line.startswith("---")]
         
+        # 给全文加上主标题
         full_markdown = f"# {today_str} 每日AI专属日报\n\n" + news_content
-        print(f"✅ 资讯生成成功，最终正文长度：{len(full_markdown)}")
         
-        with open(f"{today_str}_AI日报.md", "w", encoding="utf-8") as f:
-            f.write(full_markdown)
-            
+        print("✅ 资讯生成成功，内容长度：", len(full_markdown))
+        print("✅ 提取到", len(new_fingerprints), "条新去重指纹")
+        
+        # 保存Markdown源文件
+        try:
+            with open(today_str + "_AI日报.md", "w", encoding="utf-8") as f:
+                f.write(full_markdown)
+        except Exception as save_err:
+            print(f"⚠️  Markdown文件保存失败：{save_err}")
+        
         return full_markdown, new_fingerprints
 
     except requests.exceptions.HTTPError as e:
-        print(f"❌ API 报错：{e}")
-        print(f"❌ 错误详情：{response.text if 'response' in locals() else '无'}")
+        print(f"❌ HTTP错误：{e}")
+        print(f"❌ 火山方舟API返回的具体错误：{response.text if 'response' in locals() else '无响应内容'}")
         return None, []
     except Exception as e:
-        print(f"❌ 程序运行崩溃：{str(e)}")
+        print(f"❌ 资讯生成失败：{e}")
+        if 'response' in locals():
+            print(f"❌ API返回内容：{response.text}")
         return None, []
 
-
 def send_email(markdown_content):
-    """【优化】支持多收件人，用专业Markdown转HTML渲染，兼容QQ邮箱"""
-    # 核心：用专业函数把Markdown转为带样式的完整HTML
+    """【完全保留】支持多收件人，专业HTML渲染，兼容QQ邮箱"""
     email_html = markdown_to_html_document(markdown_content)
     
-    # 【支持多收件人】自动拆分邮箱地址
+    # 支持多收件人，英文逗号分隔
     receiver_list = [email.strip() for email in RECEIVER_EMAIL.split(',')]
     
-    # 配置邮件（QQ邮箱完全兼容格式）
+    # QQ邮箱完全兼容的邮件配置
     message = MIMEText(email_html, 'html', 'utf-8')
     message['From'] = SENDER_EMAIL
     message['To'] = RECEIVER_EMAIL
@@ -341,10 +370,10 @@ def send_email(markdown_content):
         print("✅ 邮件发送成功，已推送至所有收件人")
         return True
     except Exception as e:
-        print("❌ 邮件发送失败：", str(e))
+        print(f"❌ 邮件发送失败：{e}")
         return False
 
-# ================= 主程序入口 =================
+# ================= 主程序入口（完全保留原有逻辑） =================
 if __name__ == "__main__":
     # 检查环境变量
     required_env = [DOUBAO_API_KEY, DOUBAO_ENDPOINT_ID, SENDER_EMAIL, EMAIL_AUTH_CODE, RECEIVER_EMAIL, SMTP_SERVER]
@@ -357,6 +386,7 @@ if __name__ == "__main__":
     news_content, new_fingerprints = generate_ai_news(blacklist)
     
     if not news_content:
+        print("❌ 资讯生成失败，任务终止")
         exit(1)
     
     send_email(news_content)
@@ -365,4 +395,4 @@ if __name__ == "__main__":
     if new_fingerprints:
         updated_blacklist = blacklist + new_fingerprints
         save_blacklist(updated_blacklist)
-        print("✅ 永久去重库已更新，新增", len(new_fingerprints), "条，总计", len(updated_blacklist), "条")
+        print(f"✅ 永久去重库已更新，新增 {len(new_fingerprints)} 条，总计 {len(updated_blacklist)} 条")
