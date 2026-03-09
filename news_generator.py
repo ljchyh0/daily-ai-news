@@ -150,7 +150,7 @@ def markdown_to_html_document(markdown_text: str) -> str:
         </html>
         """
 
-# ================= 核心功能函数（完全保留原有逻辑） =================
+# ================= 核心功能函数（完全保留原有逻辑，仅修改响应解析部分） =================
 def load_blacklist():
     """加载历史去重库"""
     if os.path.exists(BLACKLIST_FILE):
@@ -237,7 +237,7 @@ def build_prompt(date_range, blacklist):
     return "".join(prompt_parts)
 
 def generate_ai_news(blacklist):
-    """【100%符合官方规范】Responses API + Web Search 正确调用方式，直接返回完整内容"""
+    """【100%符合官方规范】Responses API + Web Search 正确调用方式，仅修改响应解析逻辑"""
     PROMPT_RULE = build_prompt(date_range_str, blacklist)
 
     headers = {
@@ -301,11 +301,21 @@ def generate_ai_news(blacklist):
         response.raise_for_status()
         response_json = response.json()
 
-        # 【官方规范·容错处理】正确提取生成内容，对应文档第4章模型输出
-        if "output" in response_json and "text" in response_json["output"]:
+        # ======================== 仅修改这部分核心解析逻辑 ========================
+        # 适配API实际返回结构：从content数组中提取output_text类型的内容
+        full_content = None
+        if "content" in response_json and isinstance(response_json["content"], list):
+            for item in response_json["content"]:
+                if item.get("type") == "output_text" and item.get("text"):
+                    full_content = item["text"]
+                    break
+        # 兼容原有output.text逻辑（防止API结构回退）
+        if not full_content and "output" in response_json and "text" in response_json["output"]:
             full_content = response_json["output"]["text"]
-        else:
-            print("❌ API返回内容结构异常，无output.text字段")
+        # =========================================================================
+
+        if not full_content:
+            print("❌ API返回内容结构异常，未找到有效文本内容")
             return None, []
         
         # 【官方规范】打印搜索用量统计，对应文档3.5节
