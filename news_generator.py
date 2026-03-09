@@ -301,18 +301,22 @@ def generate_ai_news(blacklist):
         response.raise_for_status()
         response_json = response.json()
 
-        # ======================== 仅修改这部分核心解析逻辑 ========================
-        # 适配API实际返回结构：从content数组中提取output_text类型的内容
+        # ======================== 【核心修复】正确解析API返回结构 ========================
         full_content = None
-        if "content" in response_json and isinstance(response_json["content"], list):
-            for item in response_json["content"]:
-                if item.get("type") == "output_text" and item.get("text"):
-                    full_content = item["text"]
-                    break
-        # 兼容原有output.text逻辑（防止API结构回退）
-        if not full_content and "output" in response_json and "text" in response_json["output"]:
-            full_content = response_json["output"]["text"]
-        # =========================================================================
+        # 1. 先找最外层的 output 数组
+        if "output" in response_json and isinstance(response_json["output"], list):
+            # 2. 在 output 数组里找 type 为 "message" 的对象
+            for output_item in response_json["output"]:
+                if output_item.get("type") == "message" and "content" in output_item:
+                    # 3. 在 message 的 content 数组里找 type 为 "output_text" 的对象
+                    for content_item in output_item["content"]:
+                        if content_item.get("type") == "output_text" and content_item.get("text"):
+                            full_content = content_item["text"]
+                            break
+                    if full_content:
+                        break
+        # =================================================================================
+        
 
         if not full_content:
             print("❌ API返回内容结构异常，未找到有效文本内容")
